@@ -1,0 +1,2 @@
+question_number,subject,question_english,question_hindi,option_a_english,option_a_hindi,option_b_english,option_b_hindi,option_c_english,option_c_hindi,option_d_english,option_d_hindi,answer,marks,negative_marks,explanation_english,explanation_hindi
+1,Mathematics,"If x²-5x+6=0, the roots are:","यदि x²-5x+6=0 है, तो मूल हैं:","1 and 2","1 और 2","2 and 3","2 और 3","3 and 4","3 और 4","1 and 3","1 और 3",B,4,1,"Factorization gives (x-2)(x-3)=0.","गुणनखंड करने पर (x-2)(x-3)=0 मिलता है।"
