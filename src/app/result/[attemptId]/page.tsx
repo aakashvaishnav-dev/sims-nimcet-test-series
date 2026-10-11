@@ -83,7 +83,21 @@ export default async function ResultPage({ params, searchParams }: { params: Pro
                 <div className="question-label">QUESTION {q.number} • {q.subject}</div>
                 <div style={{ lineHeight: 1.65 }}><MathText text={q.questionEn} /></div>
                 {q.questionHi && <div className="hindi" style={{ lineHeight: 1.65 }}><MathText text={q.questionHi} /></div>}
-                <div className="answer-row">
+                <div className="options" style={{ marginTop: 16 }}>
+                {(["A", "B", "C", "D"] as const).map((letter) => {
+                  const optionText = q[`option${letter}En`] ?? q[`option_${letter.toLowerCase()}_en`] ?? "";
+                  const optionHi = q[`option${letter}Hi`] ?? q[`option_${letter.toLowerCase()}_hi`] ?? "";
+                  const isRight = q.correctOption === letter;
+                  const isSelected = q.selectedOption === letter;
+                  return <div className={`option ${isRight ? "correct" : ""} ${isSelected && !isRight ? "wrong" : ""}`} key={letter} style={{ cursor: "default" }}>
+                    <span className="option-key">{letter}</span>
+                    <span className="option-content"><MathText text={optionText} />{optionHi && <div className="hindi"><MathText text={optionHi} /></div>}</span>
+                    {isRight && <strong>✓</strong>}
+                    {isSelected && !isRight && <span>Your choice</span>}
+                  </div>;
+                })}
+              </div>
+              <div className="answer-row">
                   <span className={`answer-chip ${q.selectedOption ? (isCorrect ? "correct" : "wrong") : ""}`}>Your Answer: {q.selectedOption || "Not Answered"}</span>
                   <span className="answer-chip correct">Correct: {q.correctOption}</span>
                 </div>

@@ -26,6 +26,9 @@ export function ImportQuestions({ examId }: { examId: string }) {
 
   async function request(action: "preview" | "import") {
     if (!file) { setError("Select a question file first."); return; }
+    if (action === "import" && !preview) { setError("Validate & Preview your file before importing."); return; }
+    if (action === "import" && preview?.warnings.length && !window.confirm(`There are ${preview.warnings.length} warning(s). Some questions may be skipped. Import ${preview.questionCount} supported questions?`)) return;
+    if (action === "import" && mode === "replace" && !window.confirm("Replace will delete this test's existing questions. Continue?")) return;
     setLoading(true); setError(""); setMessage("");
     try {
       const form = new FormData();
@@ -51,7 +54,7 @@ export function ImportQuestions({ examId }: { examId: string }) {
   return (
     <section className="card card-pad">
       <div className="flex justify-between items-center gap-12" style={{ flexWrap: "wrap" }}>
-        <div><h3 style={{ margin: 0 }}>Import Questions</h3><p className="help">Supported: XLSX, XLS, CSV and DOCX. Maximum file size: 4 MB.</p></div>
+        <div><h3 style={{ margin: 0 }}>Import Questions</h3><p className="help">Supported: XLSX, XLS, CSV and DOCX (Q1., (1)-(4), Answer, Explanation). Maximum file size: 4 MB. Validate first; image-only and multi-answer questions are flagged.</p></div>
         <a className="btn btn-secondary btn-sm" href="/question-import-template.csv" download>Download Template</a>
       </div>
 
@@ -61,8 +64,8 @@ export function ImportQuestions({ examId }: { examId: string }) {
       </div>
 
       <div className="form-row mt-16">
-        <label className="card card-pad" style={{ padding: 14 }}><input type="radio" checked={mode === "replace"} onChange={() => setMode("replace")} /> <strong>Replace</strong><div className="help">Delete old questions and make this file the complete test.</div></label>
-        <label className="card card-pad" style={{ padding: 14 }}><input type="radio" checked={mode === "append"} onChange={() => setMode("append")} /> <strong>Append</strong><div className="help">Keep existing questions and add new unique questions at the end.</div></label>
+        <label className="card card-pad" style={{ padding: 14 }}><input type="radio" checked={mode === "replace"} onChange={() => { setMode("replace"); setPreview(null); }} /> <strong>Replace</strong><div className="help">Delete old questions and make this file the complete test.</div></label>
+        <label className="card card-pad" style={{ padding: 14 }}><input type="radio" checked={mode === "append"} onChange={() => { setMode("append"); setPreview(null); }} /> <strong>Append</strong><div className="help">Keep existing questions and add new unique questions at the end.</div></label>
       </div>
 
       {error && <div className="error mt-16">{error}</div>}
@@ -70,7 +73,7 @@ export function ImportQuestions({ examId }: { examId: string }) {
 
       <div className="flex gap-8 mt-16" style={{ flexWrap: "wrap" }}>
         <button className="btn btn-secondary" disabled={!file || loading} onClick={() => void request("preview")}>{loading ? "Reading..." : "Validate & Preview"}</button>
-        <button className="btn btn-primary" disabled={!file || loading || Boolean(preview?.errors.length)} onClick={() => void request("import")}>{loading ? "Importing..." : "Import to Test"}</button>
+        <button className="btn btn-primary" disabled={!file || loading || !preview || preview.questionCount === 0 || Boolean(preview.errors.length)} onClick={() => void request("import")}>{loading ? "Importing..." : "Import to Test"}</button>
       </div>
 
       {preview && (
@@ -79,7 +82,7 @@ export function ImportQuestions({ examId }: { examId: string }) {
           {preview.errors.length > 0 && <div className="error mt-16">{preview.errors.slice(0, 20).map((e) => <div key={e}>• {e}</div>)}</div>}
           {preview.warnings.length > 0 && <div className="card card-pad mt-16" style={{ padding: 14 }}>{preview.warnings.slice(0, 20).map((w) => <div className="help" key={w}>• {w}</div>)}</div>}
           <div className="preview-list">
-            {preview.sample.map((q, i) => <div className="preview-item" key={i}><strong>Q{i + 1}.</strong> {String(q.question_en || "")}<div className="help mt-16">A. {String(q.option_a_en || "")} &nbsp; B. {String(q.option_b_en || "")} &nbsp; C. {String(q.option_c_en || "")} &nbsp; D. {String(q.option_d_en || "")}</div><div className="help">Correct: {String(q.correct_option || "")}</div></div>)}
+            {preview.sample.map((q, i) => <div className="preview-item" key={i}><strong>Q{i + 1}.</strong> {String(q.question_en || "").replace(/\[\[IMAGE:[^\]]+\]\]/g, "[Diagram attached]").slice(0, 450)}<div className="help mt-16">A. {String(q.option_a_en || "")} &nbsp; B. {String(q.option_b_en || "")} &nbsp; C. {String(q.option_c_en || "")} &nbsp; D. {String(q.option_d_en || "")}</div><div className="help">Correct: {String(q.correct_option || "")}</div></div>)}
           </div>
         </div>
       )}

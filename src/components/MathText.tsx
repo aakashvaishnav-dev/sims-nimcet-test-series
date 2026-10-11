@@ -10,6 +10,13 @@ export function MathText({ text, className = "" }: { text?: string | null; class
     .replace(/\\\[([\s\S]*?)\\\]/g, (_m, expr) => `$$${expr}$$`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_m, expr) => `$${expr}$`);
 
+  const imageParts = normalized.split(/(\[\[IMAGE:data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+\]\])/g);
+  if (imageParts.length > 1) return <span className={className}>{imageParts.map((part, idx) => {
+    if (part.startsWith("[[IMAGE:") && part.endsWith("]]")) {
+      return <img key={idx} src={part.slice(8, -2)} alt="Question diagram" style={{ maxWidth: "100%", height: "auto", display: "block", margin: "12px auto" }} />;
+    }
+    return <MathText key={idx} text={part} />;
+  })}</span>;
   const chunks = normalized.split(/(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g).filter(Boolean);
 
   return (

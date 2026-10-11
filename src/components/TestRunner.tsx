@@ -34,6 +34,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const submittingRef = useRef(false);
   const deadlineRef = useRef(0);
+  const hiddenAtRef = useRef<number | null>(null);
+  const violationRef = useRef(false);
 
   const submit = useCallback(async (automatic = false) => {
     if (submittingRef.current) return;
@@ -50,6 +52,39 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       setSaving(false);
     }
   }, [attemptId, router]);
+
+  useEffect(() => {
+    if (!session || session.attempt.status !== "in_progress") return;
+    const report = async (event: "hidden" | "visible") => {
+      try {
+        const r = await fetch(`/api/attempts/${attemptId}/integrity`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event }), cache: "no-store", keepalive: true
+        });
+        const result = await r.json();
+        if (result.terminated) {
+          violationRef.current = true;
+          router.replace(`/result/${attemptId}?integrity=1`);
+        }
+      } catch { /* Network problems must not falsely accuse a student. */ }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+        void report("hidden");
+      } else if (hiddenAtRef.current !== null) {
+        const elapsed = Date.now() - hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        void report("visible");
+        if (elapsed > 2000 && !violationRef.current) {
+          violationRef.current = true;
+          void submit(true);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [attemptId, router, session, submit]);
 
   useEffect(() => {
     let alive = true;

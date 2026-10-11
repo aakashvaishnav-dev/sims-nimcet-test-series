@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (file.size > 4 * 1024 * 1024) return NextResponse.json({ error: "File is larger than 4 MB." }, { status: 400 });
 
   const parsed = await parseQuestionFile(file);
-  const warnings: string[] = [];
+  const warnings: string[] = [...parsed.warnings];
 
   const seen = new Set<string>();
   const unique: ImportedQuestion[] = [];

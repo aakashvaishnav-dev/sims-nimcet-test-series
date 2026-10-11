@@ -24,6 +24,7 @@ export type ImportedQuestion = {
 export type ParseResult = {
   questions: ImportedQuestion[];
   errors: string[];
+  warnings: string[];
 };
 
 function clean(value: unknown): string {
@@ -77,7 +78,9 @@ const aliases = {
 
 function normalizeAnswer(value: unknown): "A" | "B" | "C" | "D" | null {
   const text = clean(value).toUpperCase();
-  const match = text.match(/\b([ABCD])\b/);
+  if (/\b(?:AND|OR)\b|[,;+]/.test(text) && /[A-D]/.test(text)) return null;
+  const match = text.match(/^\(?([ABCD])\)?(?:\s|$)/);
+  if (/^[1-4]$/.test(text.replace(/[().\s]/g, ""))) return "ABCD"[Number(text.replace(/[().\s]/g, "")) - 1] as "A" | "B" | "C" | "D";
   return match ? (match[1] as "A" | "B" | "C" | "D") : null;
 }
 
@@ -126,7 +129,7 @@ function rowsToQuestions(rows: Record<string, unknown>[]): ParseResult {
     }
   });
 
-  return { questions, errors };
+  return { questions, errors, warnings: [] };
 }
 
 function appendField(target: Record<string, string>, field: string, value: string) {
@@ -134,116 +137,115 @@ function appendField(target: Record<string, string>, field: string, value: strin
   target[field] = target[field] ? `${target[field]}\n${value}` : value;
 }
 
+// DOCX question-paper format: Q1. ..., (1)-(4), Answer: (3), Explanation: ...
+// Also supports template-style question/option labels.
 function parseDocxText(text: string): ParseResult {
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
   const records: Record<string, string>[] = [];
+  const warnings: string[] = [];
   let current: Record<string, string> | null = null;
-  let currentField = "question_en";
-
-  const ensure = () => {
-    if (!current) current = { subject: "General" };
-    return current;
+  let field = "question_en";
+  let inExplanation = false;
+  const add = (value: string) => {
+    if (!current || !value.trim()) return;
+    appendField(current, field, value.trim());
   };
-
-  const push = () => {
-    if (current && Object.keys(current).length > 1) records.push(current);
+  const finish = () => {
+    if (current?.question_en) records.push(current);
     current = null;
-    currentField = "question_en";
+    field = "question_en";
+    inExplanation = false;
   };
-
-  const labelMap: Array<[RegExp, string]> = [
-    [/^question\s*english\s*:\s*/i, "question_en"],
-    [/^question\s*hindi\s*:\s*/i, "question_hi"],
+  const fields: Array<[RegExp, string]> = [
+    [/^question\s*(?:english|en)\s*:\s*/i, "question_en"],
+    [/^question\s*(?:hindi|hi)\s*:\s*/i, "question_hi"],
     [/^subject\s*:\s*/i, "subject"],
-    [/^(?:a|option\s*a)\s*english\s*:\s*/i, "option_a_en"],
-    [/^(?:a|option\s*a)\s*hindi\s*:\s*/i, "option_a_hi"],
-    [/^(?:b|option\s*b)\s*english\s*:\s*/i, "option_b_en"],
-    [/^(?:b|option\s*b)\s*hindi\s*:\s*/i, "option_b_hi"],
-    [/^(?:c|option\s*c)\s*english\s*:\s*/i, "option_c_en"],
-    [/^(?:c|option\s*c)\s*hindi\s*:\s*/i, "option_c_hi"],
-    [/^(?:d|option\s*d)\s*english\s*:\s*/i, "option_d_en"],
-    [/^(?:d|option\s*d)\s*hindi\s*:\s*/i, "option_d_hi"],
-    [/^(?:answer(?:\s*\/\s*उत्तर)?|correct\s*answer|correct\s*option)\s*:\s*/i, "answer"],
-    [/^(?:explanation|solution)\s*english\s*:\s*/i, "explanation_en"],
-    [/^(?:explanation|solution)\s*hindi\s*:\s*/i, "explanation_hi"],
+    [/^(?:option\s*)?([A-D])\s*(?:english|en)\s*:\s*/i, ""],
+    [/^(?:expected\s*answer|correct\s*(?:option|answer)|answer|उत्तर)\s*:\s*/i, "answer"],
+    [/^(?:explanation|solution)(?:\s*(?:english|en))?\s*:\s*/i, "explanation_en"],
+    [/^(?:explanation|solution)\s*(?:hindi|hi)\s*:\s*/i, "explanation_hi"],
     [/^marks\s*:\s*/i, "marks"],
     [/^negative\s*(?:marks|marking)?\s*:\s*/i, "negative_marks"]
   ];
-
-  for (const line of lines) {
-    const numbered = line.match(/^(\d{1,4})[.)]\s*(.*)$/);
-    if (numbered) {
-      push();
-      current = { question_number: numbered[1], subject: "General" };
-      currentField = "question_en";
-      if (numbered[2]) appendField(current, currentField, numbered[2]);
+  for (const original of text.replace(/\r/g, "").split("\n")) {
+    const line = original.trim();
+    if (!line) continue;
+    const question = line.match(/^(?:Q(?:uestion)?\s*)?(\d{1,4})[.)]\s+(.+)$/i);
+    if (question && (line.toLowerCase().startsWith("q") || !current || Boolean(current.answer))) {
+      finish();
+      current = { question_number: question[1], subject: "Life Science", question_en: question[2] };
       continue;
     }
-
+    if (!current) continue; // Ignore title, subtitle, headers and front matter.
+    // Source session/year tags are metadata rather than a separate question.
+    if (/^(?:JAN|FEB|MAR|APR|MAY|JUNE?|JULY?|AUG|SEPT?|OCT|NOV|DEC)\s+20\d\d(?:[-\s].*)?$/i.test(line)) continue;
+    // Recognize BOTH (1)-(4) and A.-D. choices without confusing Q numbering.
+    const option = line.match(/^\(?([1-4])\)[.)]?\s*(.+)$/) || line.match(/^([A-D])[.)]\s+(.+)$/i);
+    if (option && !inExplanation) {
+      field = `option_${/^[1-4]$/.test(option[1]) ? "abcd"[Number(option[1])-1] : option[1].toLowerCase()}_en`;
+      add(option[2]);
+      continue;
+    }
     let matched = false;
-    for (const [regex, field] of labelMap) {
-      if (regex.test(line)) {
-        const rec = ensure();
-        currentField = field;
-        appendField(rec, field, line.replace(regex, "").trim());
+    const labelledOption = line.match(/^(?:option\s*)?([A-D])\s*(?:english|en|hindi|hi)\s*:\s*(.*)$/i);
+    if (labelledOption) {
+      field = `option_${labelledOption[1].toLowerCase()}_${/hindi|hi/i.test(line.split(":")[0]) ? "hi" : "en"}`;
+      add(labelledOption[2]);
+      continue;
+    }
+    for (const [pattern, destination] of fields) {
+      if (destination && pattern.test(line)) {
+        field = destination;
+        add(line.replace(pattern, ""));
+        if (destination === "explanation_en" || destination === "explanation_hi") inExplanation = true;
         matched = true;
         break;
       }
     }
-    if (matched) continue;
-
-    const simpleOption = line.match(/^([ABCD])[.)]\s*(.*)$/i);
-    if (simpleOption) {
-      const rec = ensure();
-      currentField = `option_${simpleOption[1].toLowerCase()}_en`;
-      appendField(rec, currentField, simpleOption[2]);
-      continue;
-    }
-
-    const hindiQuestion = line.match(/^प्रश्न\s*(?:हिंदी)?\s*:\s*(.*)$/i);
-    if (hindiQuestion) {
-      currentField = "question_hi";
-      appendField(ensure(), currentField, hindiQuestion[1]);
-      continue;
-    }
-
-    const hindiAnswer = line.match(/^उत्तर\s*:\s*(.*)$/i);
-    if (hindiAnswer) {
-      currentField = "answer";
-      appendField(ensure(), currentField, hindiAnswer[1]);
-      continue;
-    }
-
-    if (current) appendField(current, currentField, line);
+    if (!matched) add(line);
   }
-  push();
+  finish();
+  const usable = records.filter((r) => {
+    const missing = ["option_a_en","option_b_en","option_c_en","option_d_en"].filter((k) => !r[k]);
+    if (missing.length) {
+      warnings.push(`Question ${r.question_number}: ${missing.join(", ")} unavailable. Image-only options or non-MCQ questions need manual conversion before import; skipped.`);
+      return false;
+    }
+    if (!normalizeAnswer(r.answer)) {
+      warnings.push(`Question ${r.question_number}: unsupported answer '${r.answer || "missing"}' (single A-D answer required); skipped.`);
+      return false;
+    }
+    return true;
+  });
+  const parsed = rowsToQuestions(usable.map((r) => ({
+    question_number: r.question_number, subject: r.subject,
+    question_en: r.question_en, question_hi: r.question_hi,
+    option_a_en: r.option_a_en, option_b_en: r.option_b_en,
+    option_c_en: r.option_c_en, option_d_en: r.option_d_en,
+    option_a_hi: r.option_a_hi, option_b_hi: r.option_b_hi,
+    option_c_hi: r.option_c_hi, option_d_hi: r.option_d_hi,
+    answer: r.answer, explanation_en: r.explanation_en,
+    explanation_hi: r.explanation_hi, marks: r.marks,
+    negative_marks: r.negative_marks
+  })));
+  // Database requires consecutive question numbers after unsupported entries are omitted.
+  parsed.questions.forEach((q, index) => { q.question_number = index + 1; });
+  parsed.warnings.push(...warnings);
+  if (!records.length) parsed.errors.push("No Q1./Q2. question blocks detected. Check DOCX contents.");
+  return parsed;
+}
 
-  const rows = records.map((r) => ({
-    "question number": r.question_number,
-    subject: r.subject,
-    "question english": r.question_en,
-    "question hindi": r.question_hi,
-    "a english": r.option_a_en,
-    "a hindi": r.option_a_hi,
-    "b english": r.option_b_en,
-    "b hindi": r.option_b_hi,
-    "c english": r.option_c_en,
-    "c hindi": r.option_c_hi,
-    "d english": r.option_d_en,
-    "d hindi": r.option_d_hi,
-    answer: r.answer,
-    "explanation english": r.explanation_en,
-    "explanation hindi": r.explanation_hi,
-    marks: r.marks,
-    "negative marks": r.negative_marks
-  }));
-
-  return rowsToQuestions(rows);
+// Convert the sanitized HTML emitted by Mammoth into a loss-minimizing text stream.
+// Images are embedded in their question blocks rather than discarded.
+function htmlToQuestionText(html: string): string {
+  let content = html.replace(/<img\b[^>]*src="(data:image\/(?:png|jpeg|gif|webp);base64,[^"]+)"[^>]*\/?\s*>/gi,
+    (_m, src: string) => `\n[[IMAGE:${src}]]\n`);
+  content = content.replace(/<\/t[dh]>/gi, " | ").replace(/<\/tr>/gi, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(?:p|div|h[1-6]|table|ul|ol)>/gi, "\n");
+  content = content.replace(/<[^>]+>/g, "");
+  return content.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
 export async function parseQuestionFile(file: File): Promise<ParseResult> {
@@ -251,20 +253,28 @@ export async function parseQuestionFile(file: File): Promise<ParseResult> {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   if (name.endsWith(".docx")) {
-    const { value } = await mammoth.extractRawText({ buffer });
-    return parseDocxText(value);
+    // Mammoth retains embedded diagrams and Word tables in HTML, unlike extractRawText.
+    const { value, messages } = await mammoth.convertToHtml({ buffer }, {
+      convertImage: mammoth.images.imgElement(async (image) => ({
+        src: `data:${image.contentType};base64,${(await image.read("base64"))}`
+      }))
+    });
+    const text = htmlToQuestionText(value);
+    const parsed = parseDocxText(text);
+    parsed.warnings.push(...messages.filter((m) => m.type === "warning").map((m) => m.message));
+    return parsed;
   }
 
   if (name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv")) {
     const workbook = XLSX.read(buffer, { type: "buffer" });
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!firstSheet) return { questions: [], errors: ["The file has no readable worksheet."] };
+    if (!firstSheet) return { questions: [], errors: ["The file has no readable worksheet."], warnings: [] };
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: "" });
     return rowsToQuestions(rows);
   }
 
   return {
     questions: [],
-    errors: ["Unsupported file. Please upload .xlsx, .xls, .csv, or .docx."]
+    errors: ["Unsupported file. Please upload .xlsx, .xls, .csv, or .docx."], warnings: []
   };
 }
